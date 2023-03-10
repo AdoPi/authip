@@ -10,5 +10,6 @@ actix-cors = "0.6.4"
 actix-web = "4.2.1"
 chrono = { version = "0.4.23", features = ["serde"] }
 env_logger = "0.10.0"
+redis = "0.22.3"
 serde = { version = "1.0.152", features = ["derive"] }
 uuid = { version = "1.2.2", features = ["v4"] }

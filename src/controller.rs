@@ -3,6 +3,7 @@ use crate::{
     response::{GenericResponse, SingleIpResponse, IpData, IpListResponse},
 };
 use actix_web::{delete, get, post, web, HttpResponse, Responder};
+use redis::Commands;
 
 #[get("/healthcheck")]
 async fn health_checker_controller() -> impl Responder {
@@ -21,14 +22,22 @@ pub async fn ips_txt_controller(
 ) -> impl Responder {
     let ips = data.ip_db.lock().unwrap();
 
+
+    let mut con = data.redis_con.lock().unwrap();
+    let it = con.scan().expect("Error during scan");
+    let ip_r_txt : String = it.collect::<Vec<String>>().join("\n");
+
     let ip_txt : String = ips.clone()
                              .into_iter()
                              .map(|ip| {format!("{};",ip.ipv4)})
                              .collect::<Vec<String>>()
                              .join("\n");
 
-    HttpResponse::Ok().body(ip_txt)
+    HttpResponse::Ok().body(format!("{:?} \n == Redis == \n {:?}",
+                                    ip_txt,
+                                    ip_r_txt))
 }
+
 
 #[get("/ips")]
 pub async fn ips_list_controller(
@@ -58,6 +67,20 @@ async fn create_ip_controller(
     let mut vec = data.ip_db.lock().unwrap();
 
     let ip = vec.iter().find(|ip| ip.ipv4 == body.ipv4);
+
+
+    let mut con = data.redis_con.lock().unwrap();
+    let r : bool =  con.exists(&body.ipv4).expect("Error during exist");
+    println!("Exist: {:?}",r);
+    if r {
+        let _ : bool = con.set(&body.ipv4, &body.desc).expect("Error during set");
+    } else {
+        let error_response = GenericResponse {
+            status: "fail".to_string(),
+            message: format!("ERROR REDIS {:?}", r),
+        };
+        return HttpResponse::Conflict().json(error_response);
+    }
 
     if ip.is_some() {
         let error_response = GenericResponse {
