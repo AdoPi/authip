@@ -25,7 +25,7 @@ pub async fn ips_txt_controller(
 
     let mut con = data.redis_con.lock().unwrap();
     let it = con.scan().expect("Error during scan");
-    let ip_r_txt : String = it.collect::<Vec<String>>().join("\n");
+    let mut ip_r_txt : String = it.collect::<Vec<String>>().join(";\n");
 
     let ip_txt : String = ips.clone()
                              .into_iter()
@@ -33,9 +33,9 @@ pub async fn ips_txt_controller(
                              .collect::<Vec<String>>()
                              .join("\n");
 
-    HttpResponse::Ok().body(format!("{:?} \n == Redis == \n {:?}",
-                                    ip_txt,
-                                    ip_r_txt))
+    ip_r_txt.push(';');
+
+    HttpResponse::Ok().body(ip_r_txt)
 }
 
 
@@ -72,8 +72,12 @@ async fn create_ip_controller(
     let mut con = data.redis_con.lock().unwrap();
     let r : bool =  con.exists(&body.ipv4).expect("Error during exist");
     println!("Exist: {:?}",r);
-    if r {
-        let _ : bool = con.set(&body.ipv4, &body.desc).expect("Error during set");
+    if !r {
+        if con.set(&body.ipv4, &body.desc).expect("Error during set") {
+            println!("Set ok ");
+        } else {
+            println!("Set non ok");
+        }
     } else {
         let error_response = GenericResponse {
             status: "fail".to_string(),
