@@ -5,6 +5,9 @@ use crate::{
 use actix_web::{delete, get, post, web, HttpResponse, Responder};
 use redis::Commands;
 
+
+const EXPIRATION_IN_SECONDS :usize = 60*60*24; // 24h
+
 #[get("/healthcheck")]
 async fn health_checker_controller() -> impl Responder {
     const MESSAGE: &str = "Build Simple CRUD API with Rust and Actix Web";
@@ -16,26 +19,37 @@ async fn health_checker_controller() -> impl Responder {
     HttpResponse::Ok().json(response_json)
 }
 
+
+fn get_ttl(key: &String, con: &mut redis::Connection) -> usize {
+    let mut expiry : usize = con.ttl(key).unwrap_or(0);
+    if (expiry as u64) == std::u64::MAX {
+       expiry = 0;
+    }
+    expiry
+}
+
 #[get("/ips.txt")]
 pub async fn ips_txt_controller(
     data: web::Data<AppState>,
 ) -> impl Responder {
-    let ips = data.ip_db.lock().unwrap();
+
+    let c = data.redis_con.lock().expect("Error retrieving Redis client");
+    let mut con = c.get_connection().expect("Error trying to connect to Redis {:?}");
 
 
-    let mut con = data.redis_con.lock().unwrap();
+
     let it = con.scan().expect("Error during scan");
-    let mut ip_r_txt : String = it.collect::<Vec<String>>().join(";\n");
+    let ips = it.collect::<Vec<String>>();
 
-    let ip_txt : String = ips.clone()
+    let mut ip_txt : String = ips.clone()
                              .into_iter()
-                             .map(|ip| {format!("{};",ip.ipv4)})
+                             .map(|ip| {format!("{};# {}",ip, get_ttl(&ip,&mut con))})
                              .collect::<Vec<String>>()
                              .join("\n");
 
-    ip_r_txt.push(';');
+    ip_txt.push(';');
 
-    HttpResponse::Ok().body(ip_r_txt)
+    HttpResponse::Ok().body(ip_txt)
 }
 
 
@@ -64,39 +78,37 @@ async fn create_ip_controller(
     body: web::Json<Ip>,
     data: web::Data<AppState>,
 ) -> impl Responder {
-    let mut vec = data.ip_db.lock().unwrap();
 
-    let ip = vec.iter().find(|ip| ip.ipv4 == body.ipv4);
+    let c = data.redis_con.lock().expect("Error retrieving Redis client");
+    let mut con = c.get_connection().expect("Error trying to connect to Redis {:?}");
 
+    let r : bool =  con.exists(&body.ipv4).unwrap_or_else(|err| {
+        println!("Error trying to test if key exist in Redis {:?}",err);
+        false
+    });
 
-    let mut con = data.redis_con.lock().unwrap();
-    let r : bool =  con.exists(&body.ipv4).expect("Error during exist");
     println!("Exist: {:?}",r);
     if !r {
         if con.set(&body.ipv4, &body.desc).expect("Error during set") {
             println!("Set ok ");
+
+            if body.expire {
+                // EXPIRE KEY
+                let _ : String = con.get_ex(&body.ipv4,redis::Expiry::EX(EXPIRATION_IN_SECONDS)).expect("Error during expire");
+            }
         } else {
             println!("Set non ok");
         }
     } else {
         let error_response = GenericResponse {
             status: "fail".to_string(),
-            message: format!("ERROR REDIS {:?}", r),
-        };
-        return HttpResponse::Conflict().json(error_response);
-    }
-
-    if ip.is_some() {
-        let error_response = GenericResponse {
-            status: "fail".to_string(),
-            message: format!("Ip with ipv4: '{}' already exists", body.ipv4),
+            message: format!("Key exists {:?}", r),
         };
         return HttpResponse::Conflict().json(error_response);
     }
 
     let ip = body.to_owned();
 
-    vec.push(body.into_inner());
 
     let json_response = SingleIpResponse {
         status: "success".to_string(),

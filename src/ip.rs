@@ -6,13 +6,14 @@ use std::sync::{Arc, Mutex};
 pub struct Ip {
     pub ipv4: String,
     pub desc: String,
+    pub expire: bool,
 }
 
 
 // This should use redis
 pub struct AppState {
     pub ip_db: Arc<Mutex<Vec<Ip>>>,
-    pub redis_con: Arc<Mutex<redis::Connection>>,
+    pub redis_con: Arc<Mutex<redis::Client>>,
 }
 
 impl AppState {
@@ -26,7 +27,7 @@ impl AppState {
         });
         AppState {
             ip_db: Arc::new(Mutex::new(Vec::new())),
-            redis_con: Arc::new(Mutex::new(con)),
+            redis_con: Arc::new(Mutex::new(c)),
         }
     }
 }
